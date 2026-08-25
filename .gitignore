@@ -1,0 +1,25 @@
+## Azure Functions / azd
+bin/
+obj/
+.azure/
+local.settings.json
+.func/
+
+## .NET build / IDE
+*.user
+*.suo
+.vs/
+publish/
+
+## Azurite (local storage emulator — holds local secrets/keys, never commit)
+.azurite/
+__azurite_db*__.json
+__blobstorage__/
+__queuestorage__/
+
+## Connector post-deploy temp files
+**/.notification-details-*.json
+
+## OS noise
+.DS_Store
+Thumbs.db

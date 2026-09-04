@@ -113,13 +113,9 @@ flowchart LR
 
 ## Test locally
 
-### Authenticate connections
-
-1. Go to the [Connector Namespace portal](https://connectors.azure.com) and open the namespace
-   created by `azd provision`.
-2. Open **Connections**. The SharePoint and Teams connections initially show an authentication
-   status of `Error`. Use the authentication button for each connection and complete the sign-in
-   flow.
+After provisioning, `authorize-connections.ps1` opens a browser to authenticate the SharePoint and
+Teams connections. For each authorization page, select **I have verified this request and trust the
+source**, then select **Allow access**. Connections that are already authenticated are skipped.
 
 ### Run the app locally
 
@@ -163,8 +159,20 @@ flowchart LR
 5. If you haven't previously signed in to GitHub from VS Code, complete the sign-in prompt.
 6. Right-click port `7071`, then select **Port Visibility → Public**. Public ports don't require
    sign-in. Select **Continue** in the confirmation dialog.
+7. Copy the **Forwarded Address**, then create the SharePoint trigger and point it to your local
+   Function host:
 
-## Upload file 
+   ```pwsh
+   ./infra/scripts/configure-trigger.ps1 `
+     -Target Local `
+     -CallbackBaseUrl "https://<id>-7071.uks1.devtunnels.ms"
+   ```
+
+   The trigger polls the configured SharePoint library every five minutes and sends new-file
+   notifications through the public dev tunnel. Rerun this command whenever the forwarded address
+   changes.
+
+## Upload file
 
 1. Upload `sample-data/bluecloud-rfp.txt` to the monitored SharePoint library.
 2. The function runs within the trigger's polling interval (~5 min).
@@ -195,7 +203,9 @@ flowchart LR
     azd deploy
     ```
 
-2. After app is deployed, a post deployment script (`infra/scripts/postdeploy.ps1`) runs to open a browser for authenticating the **SharePoint** and **Teams** connections. For each OAuth authorization page, select **I have verified this request and trust the source**, then click **Allow access**.
+2. The `postdeploy` hook resets the SharePoint trigger callback to the deployed Function App and
+   verifies that the **SharePoint** and **Teams** connections are authenticated. Already connected
+   connections are skipped.
 
 ### What happens in the process
 
@@ -240,7 +250,10 @@ connectors-integrated-demo/
     ├── connectorNamespace.bicep  # SharePoint + Teams connections + MI access policies
     ├── openai.bicep         # Azure OpenAI account + GPT-4o deployment + role assignment
     ├── main.parameters.json
-    └── scripts/postdeploy.ps1    # Creates the trigger config + OAuth-authorizes both connections
+    └── scripts/
+        ├── authorize-connections.ps1 # OAuth-authorizes both connections
+        ├── configure-trigger.ps1     # Points the trigger to local or Azure
+        └── postdeploy.ps1            # Restores the Azure callback after deployment
 ```
 
 ## Resources

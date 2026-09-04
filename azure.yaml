@@ -7,6 +7,11 @@ services:
     project: .
     language: csharp
 hooks:
+  postprovision:
+    shell: pwsh
+    run: ./infra/scripts/authorize-connections.ps1
+    interactive: true
+    continueOnError: false
   postdeploy:
     shell: pwsh
     run: ./infra/scripts/postdeploy.ps1

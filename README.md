@@ -69,11 +69,7 @@ flowchart LR
 - [`connector-namespace` Azure CLI extension](https://github.com/Azure/Connectors/tree/main/public-preview/connector-namespace-cli)
 - [Visual Studio Code](https://code.visualstudio.com/)
 - A SharePoint site + document library to receive RFPs.
-- A Microsoft Teams **team** and **channel** to post to. The Teams **Workflows**
-  app must be allowed in the [Teams admin center](https://admin.teams.microsoft.com/policies/manage-apps)
-  (required by the card-posting action)
-
-  > **Note:** Posting to **private channels is not supported**.
+- A Microsoft Teams **team** and **public channel** to post to. Posting to **private channels is not supported**. The Teams **Workflows** app must be allowed in the [Teams admin center](https://admin.teams.microsoft.com/policies/manage-apps) (required by the card-posting action).
 
 ## Provision resources
 1. Clone the repo:
@@ -111,20 +107,18 @@ flowchart LR
     | `TEAMS_TEAM_ID` | `00000000-0000-0000-0000-000000000000` | Microsoft 365 group ID of the Teams team that receives the summary card. |
     | `TEAMS_CHANNEL_ID` | `19:example-channel-id@thread.tacv2` | ID of the channel within that team that receives the summary card. |
 
-## Test locally
-
 After provisioning, `authorize-connections.ps1` opens a browser to authenticate the SharePoint and
 Teams connections. For each authorization page, select **I have verified this request and trust the
 source**, then select **Allow access**. Connections that are already authenticated are skipped.
+
+## Test locally
 
 ### Run the app locally
 
 1. Enter the required values in `local.settings.json`. The SharePoint and Teams connection runtime
    URLs are available on their connection pages in the Connector Namespace portal.
 
-   > **Note:** Leave `AZURE_CLIENT_ID` empty when running locally. `DefaultAzureCredential` then
-   > uses the developer identity from `az login`. The managed identity client ID is only used by
-   > the deployed Function App.
+   > **Note:** Leave `AZURE_CLIENT_ID` empty when running locally. This is referring to the managed identity client ID of the Function App and is only used when the app is running in Azure.
 
    To find your Teams team ID, list the teams you have joined:
 
@@ -142,7 +136,13 @@ source**, then select **Allow access**. Connections that are already authenticat
      --query "value[].{name:displayName,channelId:id}" -o table
    ```
 
-2. Start the app with authentication enabled:
+2. Start Azurite in a separate terminal:
+
+   ```pwsh
+   azurite --silent --location ~/.azurite/connectors-sample
+   ```
+
+3. Start the app with authentication enabled:
 
    ```pwsh
    func start --enableAuth
@@ -151,12 +151,11 @@ source**, then select **Allow access**. Connections that are already authenticat
    > **Note:** Always use `--enableAuth` when exposing your app through a dev tunnel. Without it,
    > your function endpoint is completely unauthenticated on the public internet.
 
-3. In VS Code, open the integrated terminal with **Control+Shift+`** on macOS or
-   **Ctrl+Shift+`** on Windows. Open the **Ports** view in the Panel region, then select
+4. In VS Code, open the integrated terminal (**Cmd+Shift+\`** or
+   **Ctrl+Shift+\`**). Open the **Ports** view in the Panel region, then select
    **Forward a Port**.
-4. Enter port `7071`. Port forwarding starts, and the **Ports** view displays a
-   **Forwarded Address**, such as `https://<id>-7071.uks1.devtunnels.ms`.
-5. If you haven't previously signed in to GitHub from VS Code, complete the sign-in prompt.
+5. Enter port `7071`. Port forwarding starts, and the **Ports** view displays a
+   **Forwarded Address**, such as `https://<id>-7071.uks1.devtunnels.ms`. If you haven't previously signed in to GitHub from VS Code, complete the sign-in prompt.
 6. Right-click port `7071`, then select **Port Visibility → Public**. Public ports don't require
    sign-in. Select **Continue** in the confirmation dialog.
 7. Copy the **Forwarded Address**, then create the SharePoint trigger and point it to your local
@@ -193,19 +192,18 @@ source**, then select **Allow access**. Connections that are already authenticat
    - Security Architect
    ```
 
-> **Note:** This sample assumes **text-style RFPs** (`.txt` / `.md`). Binary formats (PDF, DOCX) would need a
-> document-extraction step (e.g. Azure AI Document Intelligence) before the Azure OpenAI call, which is **not** included in the sample.
+    This sample assumes **text-style RFPs** (`.txt` / `.md`). Binary formats (PDF, DOCX) would need a
+    document-extraction step (e.g. Azure AI Document Intelligence) before the Azure OpenAI call, which is **not** included in the sample.
 
-## Deploy to Function App to Azure
-1. Deploy:
+## Deploy Function App to Azure
+
+1. Deploy the Function App:
 
     ```pwsh
     azd deploy
     ```
 
-2. The `postdeploy` hook resets the SharePoint trigger callback to the deployed Function App and
-   verifies that the **SharePoint** and **Teams** connections are authenticated. Already connected
-   connections are skipped.
+2. Upload a newly named file to the monitored SharePoint library.
 
 ### What happens in the process
 
@@ -231,6 +229,17 @@ azd down --purge
 | **Connector Namespace system MI** | Polls the SharePoint trigger and delivers callbacks. |
 | **Callback authorization** | The connector `connector_extension` system key on the callback URL (default). This sample does **not** use App Service built-in auth. |
 
+## Deployment scripts
+
+The scripts in `infra/scripts` complete setup that cannot be handled entirely by the Bicep
+deployment:
+
+| Script | What it does | Why it is needed |
+|---|---|---|
+| `authorize-connections.ps1` | Opens the OAuth consent flow for the SharePoint and Teams connections, then waits for each connection to become authenticated. Connections that are already authenticated are skipped. | Bicep creates the connections, but a user must grant consent before they can access SharePoint or Teams. `azd provision` runs this script through the `postprovision` hook. |
+| `configure-trigger.ps1` | Creates the SharePoint new-file trigger and points it to either a local dev tunnel (`-Target Local`) or the deployed Function App (`-Target Azure`). It retrieves the appropriate `connector_extension` system key and adds it to the callback URL. | The callback URL and `connector_extension` system key are not available until the function is running locally or deployed to Azure, so the authenticated callback must be configured afterward. Changing between those targets requires the trigger to be deleted and recreated. |
+| `postdeploy.ps1` | Runs `configure-trigger.ps1 -Target Azure`, then checks the SharePoint and Teams connection authorization. | `azd deploy` uses this script through the `postdeploy` hook to replace any local callback with the deployed Function App callback and leave the Azure workflow ready to use. |
+
 ## Project layout
 
 ```
@@ -238,13 +247,12 @@ connectors-integrated-demo/
 ├── Program.cs               # DI: SharePoint + Teams SDK clients, Azure OpenAI client (managed identity)
 ├── RfpFunctions.cs          # OnNewFile: trigger → get content → OpenAI → post Teams card
 ├── host.json
-├── azure.yaml               # azd config + post-deploy hook
+├── azure.yaml               # azd config + post-provision and post-deploy hooks
 ├── rfpApp.csproj
 ├── local.settings.json.sample
 ├── Architecture.md          # deep-dive platform architecture (connectors × functions)
 ├── sample-data/
 │   └── bluecloud-rfp.txt    # Text-style sample RFP to upload for testing
-├── docs/                    # local-run commands + Visio prompt
 └── infra/
     ├── main.bicep           # Function app, storage, App Insights, namespace, OpenAI, app settings
     ├── connectorNamespace.bicep  # SharePoint + Teams connections + MI access policies
@@ -255,6 +263,19 @@ connectors-integrated-demo/
         ├── configure-trigger.ps1     # Points the trigger to local or Azure
         └── postdeploy.ps1            # Restores the Azure callback after deployment
 ```
+
+## Troubleshooting
+
+If the Connector Namespace trigger does not fire:
+
+- In the Connector Namespace portal, verify that the SharePoint trigger's callback URL points to
+  the intended local dev tunnel or deployed Function App and includes the correct
+  `connector_extension` access key.
+- For local testing, verify that port `7071` is forwarded and the dev tunnel visibility is
+  **Public**.
+- Ensure Azurite is running before starting the function locally and configuring the trigger.
+- Leave `AZURE_CLIENT_ID` empty in `local.settings.json` for local development. The Function App's
+  managed identity client ID is only needed when running in Azure.
 
 ## Resources
 

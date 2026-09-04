@@ -31,6 +31,50 @@ if (-not $resourceGroupName -or -not $connectorNamespaceName -or
 $functionName = 'OnNewFile'
 $triggerName = "$sharepointConnectionName-$($functionName.ToLower())"
 
+function Get-LocalConnectorExtensionKey {
+    $connectionString = 'UseDevelopmentStorage=true'
+    $hostBlobName = az storage blob list `
+        --container-name azure-webjobs-secrets `
+        --connection-string $connectionString `
+        --query "sort_by([], &properties.lastModified)[-1].name" `
+        -o tsv
+
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($hostBlobName)) {
+        throw "Could not find local Function host keys in Azurite. Start Azurite and run 'func start --enableAuth' first."
+    }
+
+    $hostKeysFile = Join-Path ([System.IO.Path]::GetTempPath()) "connector-host-keys-$([System.Guid]::NewGuid().ToString('N')).json"
+    try {
+        az storage blob download `
+            --container-name azure-webjobs-secrets `
+            --name $hostBlobName `
+            --connection-string $connectionString `
+            --file $hostKeysFile `
+            --no-progress `
+            --overwrite `
+            -o none
+
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not download local Function host keys from Azurite."
+        }
+
+        $hostKeys = Get-Content $hostKeysFile -Raw | ConvertFrom-Json
+        $connectorKey = $hostKeys.systemKeys |
+            Where-Object { $_.name -eq 'connector_extension' } |
+            Select-Object -First 1
+
+        $connectorKeyValue = if ($connectorKey.value) { $connectorKey.value } else { $connectorKey.val }
+        if ([string]::IsNullOrWhiteSpace($connectorKeyValue)) {
+            throw "The local connector_extension system key was not found. Ensure the Connector extension loaded successfully."
+        }
+
+        return $connectorKeyValue
+    }
+    finally {
+        Remove-Item $hostKeysFile -ErrorAction SilentlyContinue
+    }
+}
+
 if ($Target -eq 'Local') {
     if ([string]::IsNullOrWhiteSpace($CallbackBaseUrl)) {
         throw "-CallbackBaseUrl is required for a Local target."
@@ -41,7 +85,8 @@ if ($Target -eq 'Local') {
         throw "-CallbackBaseUrl must be a public HTTPS URL."
     }
 
-    $callbackUrl = "$callbackBase/runtime/webhooks/connector?functionName=$functionName"
+    $connectorExtensionKey = Get-LocalConnectorExtensionKey
+    $callbackUrl = "$callbackBase/runtime/webhooks/connector?functionName=$functionName&code=$([uri]::EscapeDataString($connectorExtensionKey))"
     $metadata = "{destinationType:functionApp,functionName:$functionName,recurrenceFrequency:Minute,recurrenceInterval:'5'}"
 }
 else {
@@ -67,7 +112,9 @@ if ($sharepointFolderPath) {
 }
 $triggerParameters += "]"
 
-$notificationFile = Join-Path $PSScriptRoot ".notification-details-$([System.Guid]::NewGuid().ToString('N')).json"
+$notificationFile = Join-Path `
+    ([System.IO.Path]::GetTempPath()) `
+    "connector-notification-details-$([System.Guid]::NewGuid().ToString('N')).json"
 @{ callbackUrl = $callbackUrl } | ConvertTo-Json -Compress | Set-Content -Path $notificationFile -NoNewline
 
 try {
@@ -92,10 +139,21 @@ try {
     }
 }
 finally {
-    Remove-Item $notificationFile -ErrorAction SilentlyContinue
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        Remove-Item $notificationFile -Force -ErrorAction SilentlyContinue
+        if (-not (Test-Path $notificationFile)) {
+            break
+        }
+
+        Start-Sleep -Milliseconds 200
+    }
+
+    if (Test-Path $notificationFile) {
+        Write-Warning "Could not delete temporary callback file: $notificationFile"
+    }
 }
 
 Write-Host "SharePoint trigger now targets $Target." -ForegroundColor Green
 if ($Target -eq 'Local') {
-    Write-Host "Callback: $callbackUrl" -ForegroundColor Cyan
+    Write-Host "Callback: $callbackBase/runtime/webhooks/connector?functionName=$functionName&code=<redacted>" -ForegroundColor Cyan
 }

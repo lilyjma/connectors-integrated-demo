@@ -34,7 +34,7 @@ param userPrincipalId string = deployer().objectId
 param sharepointSiteUrl string
 
 @description('SharePoint document library name to monitor for new RFPs (e.g., "Documents").')
-param sharepointLibraryName string = 'Documents'
+param sharepointLibraryName string
 
 @description('Optional folder path within the library to monitor (e.g., "/Shared Documents/Subfolder"). Leave blank for the whole library.')
 param sharepointFolderPath string = ''

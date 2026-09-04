@@ -21,7 +21,7 @@
       "value": "${SHAREPOINT_SITE_URL}"
     },
     "sharepointLibraryName": {
-      "value": "${SHAREPOINT_LIBRARY_NAME=Documents}"
+      "value": "${SHAREPOINT_LIBRARY_NAME}"
     },
     "sharepointFolderPath": {
       "value": "${SHAREPOINT_FOLDER_PATH=}"

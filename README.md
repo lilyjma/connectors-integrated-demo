@@ -266,7 +266,7 @@ connectors-integrated-demo/
 
 ## Troubleshooting
 
-If the Connector Namespace trigger does not fire:
+If the summary card is not posted to the specified Teams channel, check the following:
 
 - In the Connector Namespace portal, verify that the SharePoint trigger's callback URL points to
   the intended local dev tunnel or deployed Function App and includes the correct
